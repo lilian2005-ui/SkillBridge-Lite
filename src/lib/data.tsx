@@ -90,4 +90,3 @@ export function useProfile() {
 }
 
 // Real AI analysis is not configured in this prototype.
-export const AI_CONFIGURED = false;

@@ -79,7 +79,7 @@ Rules:
 export const analyzeFit = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => InputSchema.parse(d))
   .handler(async ({ data }): Promise<FitResponse> => {
-    const apiKey = process.env.LOVABLE_API_KEY;
+    const apiKey = process.env["LOVABLE_API_KEY"];
     if (!apiKey) {
       return { ok: false, kind: "unavailable", message: "The AI service is not configured for this app." };
     }
