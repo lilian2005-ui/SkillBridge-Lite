@@ -1,5 +1,5 @@
 import { createFileRoute, Link, notFound } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { AI_CONFIGURED, OPPORTUNITIES, useProfile, type Opportunity, type Profile } from "@/lib/data";
 
@@ -20,35 +20,56 @@ export const Route = createFileRoute("/analysis/$id")({
   component: Analysis,
 });
 
-type State = "loading" | "insufficient" | "unavailable" | "error" | "ready";
+type State = "idle" | "analyzing" | "success" | "insufficient" | "unavailable" | "error";
+
+type AnalysisResult = {
+  relevantSkills: string[];
+  potentialGaps: string[];
+  nextSteps: string[];
+};
 
 function parseSkills(p: Profile) {
   return p.skills.split(",").map((s) => s.trim()).filter(Boolean);
 }
 
+function hasEnoughData(p: Profile) {
+  return parseSkills(p).length > 0 && (p.projects.trim().length > 0 || p.experience.trim().length > 0);
+}
+
+// Placeholder for the real AI request. No AI service is configured in this
+// prototype, so this always rejects; when a service is connected, replace the
+// body with the actual API call and return its parsed result.
+async function requestAnalysis(_profile: Profile, _opportunity: Opportunity): Promise<AnalysisResult> {
+  throw new Error("AI service not configured");
+}
+
 function Analysis() {
   const o = Route.useLoaderData();
   const { profile, isSample } = useProfile();
-  const [state, setState] = useState<State>("loading");
+  const [state, setState] = useState<State>("idle");
+  const [result, setResult] = useState<AnalysisResult | null>(null);
   const [showDemo, setShowDemo] = useState(false);
 
-  useEffect(() => {
-    setState("loading");
-    const t = setTimeout(() => {
-      try {
-        if (parseSkills(profile).length === 0 || (!profile.projects.trim() && !profile.experience.trim())) {
-          setState("insufficient");
-        } else if (!AI_CONFIGURED) {
-          setState("unavailable");
-        } else {
-          setState("ready");
-        }
-      } catch {
-        setState("error");
-      }
-    }, 500);
-    return () => clearTimeout(t);
-  }, [profile, o.id]);
+  const runAnalysis = useCallback(async () => {
+    setShowDemo(false);
+    setResult(null);
+    if (!hasEnoughData(profile)) {
+      setState("insufficient");
+      return;
+    }
+    if (!AI_CONFIGURED) {
+      setState("unavailable");
+      return;
+    }
+    setState("analyzing");
+    try {
+      const r = await requestAnalysis(profile, o);
+      setResult(r);
+      setState("success");
+    } catch {
+      setState("error");
+    }
+  }, [profile, o]);
 
   return (
     <section className="mx-auto max-w-3xl px-5 py-12">
@@ -61,27 +82,48 @@ function Analysis() {
       </p>
 
       <div className="mt-8">
-        {state === "loading" && <Notice title="Checking your profile…" body="Preparing the analysis." />}
+        {state === "idle" && (
+          <Notice title="Ready to analyze your fit" body="We'll compare your profile against this opportunity and summarize your relevant skills, potential gaps, and recommended next steps.">
+            <Button className="mt-4" onClick={runAnalysis}>Analyze My Fit</Button>
+          </Notice>
+        )}
+
+        {state === "analyzing" && (
+          <Notice title="Analyzing your profile…" body="This usually takes a few seconds. Please don't close this page.">
+            <div className="mt-4 flex items-center gap-3 text-sm text-muted-foreground" role="status" aria-live="polite">
+              <span className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" aria-hidden="true" />
+              Analysis in progress…
+            </div>
+          </Notice>
+        )}
+
         {state === "insufficient" && (
           <Notice title="Not enough profile information" body="Add at least a few skills and some projects or experience to your profile before analyzing your fit.">
             <Button asChild className="mt-4"><Link to="/profile">Update profile</Link></Button>
           </Notice>
         )}
-        {state === "error" && (
-          <Notice tone="error" title="Something went wrong" body="The analysis could not be prepared. Please try again.">
-            <Button className="mt-4" onClick={() => setState("loading")}>Try again</Button>
-          </Notice>
-        )}
+
         {state === "unavailable" && (
           <>
-            <Notice title="Real AI analysis is currently unavailable" body="No AI service is configured for this prototype, so no real analysis has been performed on your profile.">
-              <Button variant="outline" className="mt-4" onClick={() => setShowDemo((v) => !v)}>
-                {showDemo ? "Hide demonstration example" : "Show demonstration example"}
-              </Button>
+            <Notice title="Real AI analysis is currently unavailable" body="No AI service has been configured for this app yet, so we can't run a real analysis on your profile. Nothing below was generated by AI.">
+              <div className="mt-4 flex flex-wrap gap-3">
+                <Button variant="outline" onClick={() => setShowDemo((v) => !v)}>
+                  {showDemo ? "Hide demonstration example" : "Show demonstration example"}
+                </Button>
+                <Button variant="ghost" onClick={() => setState("idle")}>Back</Button>
+              </div>
             </Notice>
             {showDemo && <Demo o={o} />}
           </>
         )}
+
+        {state === "error" && (
+          <Notice tone="error" title="Something went wrong" body="The analysis request didn't complete. This can happen if the service is busy or your connection dropped — please try again.">
+            <Button className="mt-4" onClick={runAnalysis}>Try again</Button>
+          </Notice>
+        )}
+
+        {state === "success" && result && <ResultSections result={result} />}
       </div>
     </section>
   );
@@ -97,26 +139,43 @@ function Notice({ title, body, tone, children }: { title: string; body: string; 
   );
 }
 
+function Section({ title, items }: { title: string; items: string[] }) {
+  return (
+    <div className="rounded-lg border bg-card p-4">
+      <h3 className="font-semibold">{title}</h3>
+      <ul className="mt-2 list-disc space-y-1 pl-4 text-sm text-muted-foreground">
+        {items.map((i) => <li key={i}>{i}</li>)}
+      </ul>
+    </div>
+  );
+}
+
+function ResultSections({ result }: { result: AnalysisResult }) {
+  return (
+    <div className="grid gap-4 md:grid-cols-3">
+      <Section title="Relevant Skills" items={result.relevantSkills} />
+      <Section title="Potential Gaps" items={result.potentialGaps} />
+      <Section title="Recommended Next Steps" items={result.nextSteps} />
+    </div>
+  );
+}
+
 function Demo({ o }: { o: Opportunity }) {
-  const sections = [
-    { title: "Relevant Skills", items: [`Example: experience with ${o.skills[0]} shown in a past project`] },
-    { title: "Potential Gaps", items: [`Example: no documented work with ${o.skills[o.skills.length - 1]}`] },
-    { title: "Recommended Next Steps", items: [`Example: build a small project using ${o.skills[o.skills.length - 1]}`, "Example: describe project outcomes in your profile"] },
-  ];
+  const demo: AnalysisResult = {
+    relevantSkills: [`Example: experience with ${o.skills[0]} shown in a past project`],
+    potentialGaps: [`Example: no documented work with ${o.skills[o.skills.length - 1]}`],
+    nextSteps: [
+      `Example: build a small project using ${o.skills[o.skills.length - 1]}`,
+      "Example: describe project outcomes in your profile",
+    ],
+  };
   return (
     <div className="mt-6 rounded-xl border-2 border-dashed border-primary/40 p-6">
       <p className="inline-block rounded-full bg-accent px-3 py-1 text-xs font-semibold uppercase tracking-wide text-accent-foreground">
         Demonstration example — not a real analysis
       </p>
-      <div className="mt-5 grid gap-4 md:grid-cols-3">
-        {sections.map((s) => (
-          <div key={s.title} className="rounded-lg border bg-card p-4">
-            <h3 className="font-semibold">{s.title}</h3>
-            <ul className="mt-2 list-disc space-y-1 pl-4 text-sm text-muted-foreground">
-              {s.items.map((i) => <li key={i}>{i}</li>)}
-            </ul>
-          </div>
-        ))}
+      <div className="mt-5">
+        <ResultSections result={demo} />
       </div>
     </div>
   );
